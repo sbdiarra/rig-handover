@@ -1,0 +1,50 @@
+# Plan morning-digest § 3/§ 4 (ADR 0003): the preview is built here and deployed to GitHub Pages
+# as an artifact, never committed. LANE_MARKER comes from the repo secret of the same name;
+# with the secret deleted the banner reads "no marker set" (clean-up, § 4).
+name: preview
+on:
+  workflow_dispatch:
+    inputs:
+      night:
+        description: night to preview
+        default: '2026-10-28'
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npx -y pnpm@12.16.1 install --frozen-lockfile
+      - name: Save the page as one HTML file
+        env:
+          LANE_MARKER: ${{ secrets.LANE_MARKER }}
+          NIGHT: ${{ inputs.night }}
+        run: |
+          cp .env.example .env
+          sed -i "s/^LANE_MARKER=.*/LANE_MARKER=${LANE_MARKER}/" .env
+          npx -y pnpm@12.16.1 start > server.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf localhost:8787/health >/dev/null && break; sleep 1; done
+          mkdir -p _site
+          curl -sf "localhost:8787/digest/${NIGHT}" -o _site/index.html
+          grep -q '<table>' _site/index.html
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
